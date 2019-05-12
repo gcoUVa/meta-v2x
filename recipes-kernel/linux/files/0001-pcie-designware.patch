@@ -1,0 +1,33 @@
+From 36edb9e0886f0157e63440674cc03cfdf6457e6e Mon Sep 17 00:00:00 2001
+From: Pastrana <jferpas@gmail.com>
+Date: Thu, 28 Feb 2019 22:11:34 +0100
+Subject: [PATCH] pcie-designware
+
+Signed-off-by: Pastrana <jferpas@gmail.com>
+---
+ drivers/pci/host/pcie-designware-plat.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/pci/host/pcie-designware-plat.c b/drivers/pci/host/pcie-designware-plat.c
+index 1a02038..f993245 100644
+--- a/drivers/pci/host/pcie-designware-plat.c
++++ b/drivers/pci/host/pcie-designware-plat.c
+@@ -35,13 +35,14 @@ static irqreturn_t dw_plat_pcie_msi_irq_handler(int irq, void *arg)
+ 	return dw_handle_msi_irq(pp);
+ }
+ 
+-static void dw_plat_pcie_host_init(struct pcie_port *pp)
++static int dw_plat_pcie_host_init(struct pcie_port *pp)
+ {
+ 	dw_pcie_setup_rc(pp);
+ 	dw_pcie_wait_for_link(pp);
+ 
+ 	if (IS_ENABLED(CONFIG_PCI_MSI))
+ 		dw_pcie_msi_init(pp);
++	return 0;
+ }
+ 
+ static struct pcie_host_ops dw_plat_pcie_host_ops = {
+-- 
+1.9.1
+

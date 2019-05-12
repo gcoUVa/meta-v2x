@@ -1,0 +1,32 @@
+This README file contains information on the contents of the meta-v2x layer.
+
+Please see the corresponding sections below for details.
+
+Images
+============
+
+* core-image-v2x-dev::
+This image contains all the necessary components for giving 802.11p connectivity. Up until now, it is only provided a development
+image, this means that Wireless-regdb and CRDA software have to been compiled in the host (Hummingboard2).
+In the future, it will be provided the core-image-v2x image which will have solely the neccesary componentes for having 802.11p 
+connection without compiling those programs in the host.
+
+Tested Wi-Fi pcie cards
+========================
+Atheros AR5B22
+Atheros AR5BHB116
+MikroTik R11e-5HnD
+
+Project background
+===================
+In order to realize this project, It has been relied on this two projects:
+
+* Github Gist: https://gist.github.com/lisovy/80dde5a792e774a706a9
+* Master thesis: https://github.com/jfpastrana/802.11p
+
+Patches
+=======
+
+Please submit any patches against the meta-v2x layer to javier.fernandez.pastrana@gmail.com
+
+Maintainer: Javier Fernández Pastrana javier.fernandez.pastrana@gmail.com

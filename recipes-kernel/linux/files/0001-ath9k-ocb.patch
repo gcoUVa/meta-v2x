@@ -1,0 +1,103 @@
+From 48df3ef8d360321a0d6c0c4431308458c962aa0a Mon Sep 17 00:00:00 2001
+From: Pastrana <jferpas@gmail.com>
+Date: Mon, 4 Mar 2019 17:39:29 +0100
+Subject: [PATCH] ath9k-ocb
+
+Signed-off-by: Pastrana <jferpas@gmail.com>
+---
+ drivers/net/wireless/ath/ath9k/ani.c         |  3 ++-
+ drivers/net/wireless/ath/ath9k/common-init.c | 19 +++++++++++++++++++
+ drivers/net/wireless/ath/ath9k/hw.h          |  2 +-
+ drivers/net/wireless/ath/regd.c              |  8 ++++----
+ 4 files changed, 26 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath9k/ani.c b/drivers/net/wireless/ath/ath9k/ani.c
+index 815efe9..6394a98 100644
+--- a/drivers/net/wireless/ath/ath9k/ani.c
++++ b/drivers/net/wireless/ath/ath9k/ani.c
+@@ -326,7 +326,8 @@ void ath9k_ani_reset(struct ath_hw *ah, bool is_scanning)
+ 
+ 	if (is_scanning ||
+ 	    (ah->opmode != NL80211_IFTYPE_STATION &&
+-	     ah->opmode != NL80211_IFTYPE_ADHOC)) {
++		ah->opmode != NL80211_IFTYPE_OCB &&
++		ah->opmode != NL80211_IFTYPE_ADHOC)) {
+ 		/*
+ 		 * If we're scanning or in AP mode, the defaults (ini)
+ 		 * should be in place. For an AP we assume the historical
+diff --git a/drivers/net/wireless/ath/ath9k/common-init.c b/drivers/net/wireless/ath/ath9k/common-init.c
+index 8b4f7fd..42e191a 100644
+--- a/drivers/net/wireless/ath/ath9k/common-init.c
++++ b/drivers/net/wireless/ath/ath9k/common-init.c
+@@ -86,6 +86,25 @@
+ 	CHAN5G(5785, 35), /* Channel 157 */
+ 	CHAN5G(5805, 36), /* Channel 161 */
+ 	CHAN5G(5825, 37), /* Channel 165 */
++	CHAN5G(5850, 38), /* Channel 170 */
++	/* ITA-G5B */
++	CHAN5G(5855, 39), /* Channel 171 */
++	CHAN5G(5860, 40), /* Channel 172 */
++	CHAN5G(5865, 41), /* Channel 173 */
++	CHAN5G(5870, 42), /* Channel 174 */
++	/* ITS-G5A */
++	CHAN5G(5875, 43), /* Channel 175 */
++	CHAN5G(5880, 44), /* Channel 176 */
++	CHAN5G(5885, 45), /* Channel 177 */
++	CHAN5G(5890, 46), /* Channel 178 */
++	CHAN5G(5895, 47), /* Channel 179 */
++	CHAN5G(5900, 48), /* Channel 180 */
++	CHAN5G(5905, 49), /* Channel 181 */
++	/* ITS-G5D */
++	CHAN5G(5910, 50), /* Channel 182 */
++	CHAN5G(5915, 51), /* Channel 183 */
++	CHAN5G(5920, 52), /* Channel 184 */
++	CHAN5G(5925, 53), /* Channel 185 */
+ };
+ 
+ /* Atheros hardware rate code addition for short premble */
+diff --git a/drivers/net/wireless/ath/ath9k/hw.h b/drivers/net/wireless/ath/ath9k/hw.h
+index 9cbca12..5a0af16 100644
+--- a/drivers/net/wireless/ath/ath9k/hw.h
++++ b/drivers/net/wireless/ath/ath9k/hw.h
+@@ -73,7 +73,7 @@
+ 
+ #define ATH9K_RSSI_BAD			-128
+ 
+-#define ATH9K_NUM_CHANNELS	38
++#define ATH9K_NUM_CHANNELS	54
+ 
+ /* Register read/write primitives */
+ #define REG_WRITE(_ah, _reg, _val) \
+diff --git a/drivers/net/wireless/ath/regd.c b/drivers/net/wireless/ath/regd.c
+index 404fc30..c664df5 100644
+--- a/drivers/net/wireless/ath/regd.c
++++ b/drivers/net/wireless/ath/regd.c
+@@ -45,9 +45,9 @@
+ /* We allow IBSS on these on a case by case basis by regulatory domain */
+ #define ATH9K_5GHZ_5150_5350	REG_RULE(5150-10, 5350+10, 80, 0, 30,\
+ 					 NL80211_RRF_NO_IR)
+-#define ATH9K_5GHZ_5470_5850	REG_RULE(5470-10, 5850+10, 80, 0, 30,\
++#define ATH9K_5GHZ_5470_5925	REG_RULE(5470-10, 5925+10, 80, 0, 30,\
+ 					 NL80211_RRF_NO_IR)
+-#define ATH9K_5GHZ_5725_5850	REG_RULE(5725-10, 5850+10, 80, 0, 30,\
++#define ATH9K_5GHZ_5725_5925	REG_RULE(5725-10, 5925+10, 80, 0, 30,\
+ 					 NL80211_RRF_NO_IR)
+ 
+ #define ATH9K_2GHZ_ALL		ATH9K_2GHZ_CH01_11, \
+@@ -55,11 +55,11 @@
+ 				ATH9K_2GHZ_CH14
+ 
+ #define ATH9K_5GHZ_ALL		ATH9K_5GHZ_5150_5350, \
+-				ATH9K_5GHZ_5470_5850
++				ATH9K_5GHZ_5470_5925
+ 
+ /* This one skips what we call "mid band" */
+ #define ATH9K_5GHZ_NO_MIDBAND	ATH9K_5GHZ_5150_5350, \
+-				ATH9K_5GHZ_5725_5850
++				ATH9K_5GHZ_5725_5925
+ 
+ /* Can be used for:
+  * 0x60, 0x61, 0x62 */
+-- 
+1.9.1
+
