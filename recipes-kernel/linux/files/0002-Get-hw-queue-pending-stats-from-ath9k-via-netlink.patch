@@ -1,0 +1,491 @@
+From ab193f9e8f32c887f87ffc911495e0fc3919c431 Mon Sep 17 00:00:00 2001
+From: jfpastrana <javier.fernandez.pastrana@gmail.com>
+Date: Sat, 8 Feb 2020 11:51:20 +0000
+Subject: [PATCH 2/2] Get-hw-queue-pending-stats-from-ath9k-via-netlink
+
+Signed-off-by: jfpastrana <javier.fernandez.pastrana@gmail.com>
+---
+ drivers/net/wireless/ath/ath9k/ath9k.h |  6 ++-
+ drivers/net/wireless/ath/ath9k/debug.c | 52 +++++++++++---------
+ drivers/net/wireless/ath/ath9k/debug.h |  4 ++
+ drivers/net/wireless/ath/ath9k/main.c  | 24 +++++++++
+ drivers/net/wireless/ath/ath9k/xmit.c  | 13 +++++
+ include/net/cfg80211.h                 | 26 ++++++++++
+ include/net/mac80211.h                 |  2 +
+ include/uapi/linux/nl80211.h           | 21 ++++++++
+ net/mac80211/cfg.c                     |  9 ++++
+ net/mac80211/driver-ops.h              |  9 ++++
+ net/wireless/nl80211.c                 | 90 ++++++++++++++++++++++++++++++++++
+ net/wireless/rdev-ops.h                |  9 ++++
+ 12 files changed, 239 insertions(+), 26 deletions(-)
+
+diff --git a/drivers/net/wireless/ath/ath9k/ath9k.h b/drivers/net/wireless/ath/ath9k/ath9k.h
+index a731671..0987b85 100644
+--- a/drivers/net/wireless/ath/ath9k/ath9k.h
++++ b/drivers/net/wireless/ath/ath9k/ath9k.h
+@@ -959,6 +959,8 @@ struct ath_softc {
+ 	struct survey_info *cur_survey;
+ 	struct survey_info survey[ATH9K_NUM_CHANNELS];
+ 
++	struct flush_info hw_q_flush_info;
++
+ 	spinlock_t intr_lock;
+ 	struct tasklet_struct intr_tq;
+ 	struct tasklet_struct bcon_tasklet;
+@@ -983,8 +985,8 @@ struct ath_softc {
+ 	struct ath_chanctx *next_chan;
+ 	struct completion go_beacon;
+ 	struct timespec last_event_time;
+-#endif
+-
++#endif	
++	u32 flush_hw_q_pending;
+ 	unsigned long driver_data;
+ 
+ 	u8 gtt_cnt;
+diff --git a/drivers/net/wireless/ath/ath9k/debug.c b/drivers/net/wireless/ath/ath9k/debug.c
+index c56e40f..a7b227a 100644
+--- a/drivers/net/wireless/ath/ath9k/debug.c
++++ b/drivers/net/wireless/ath/ath9k/debug.c
+@@ -593,30 +593,32 @@ static int read_file_xmit(struct seq_file *file, void *data)
+ 	struct ieee80211_hw *hw = dev_get_drvdata(file->private);
+ 	struct ath_softc *sc = hw->priv;
+ 
+-	seq_printf(file, "%30s %10s%10s%10s\n\n", "BE", "BK", "VI", "VO");
+-
+-	PR("MPDUs Queued:    ", queued);
+-	PR("MPDUs Completed: ", completed);
+-	PR("MPDUs XRetried:  ", xretries);
+-	PR("Aggregates:      ", a_aggr);
+-	PR("AMPDUs Queued HW:", a_queued_hw);
+-	PR("AMPDUs Queued SW:", a_queued_sw);
+-	PR("AMPDUs Completed:", a_completed);
+-	PR("AMPDUs Retried:  ", a_retries);
+-	PR("AMPDUs XRetried: ", a_xretries);
+-	PR("TXERR Filtered:  ", txerr_filtered);
+-	PR("FIFO Underrun:   ", fifo_underrun);
+-	PR("TXOP Exceeded:   ", xtxop);
+-	PR("TXTIMER Expiry:  ", timer_exp);
+-	PR("DESC CFG Error:  ", desc_cfg_err);
+-	PR("DATA Underrun:   ", data_underrun);
+-	PR("DELIM Underrun:  ", delim_underrun);
+-	PR("TX-Pkts-All:     ", tx_pkts_all);
+-	PR("TX-Bytes-All:    ", tx_bytes_all);
+-	PR("HW-put-tx-buf:   ", puttxbuf);
+-	PR("HW-tx-start:     ", txstart);
+-	PR("HW-tx-proc-desc: ", txprocdesc);
+-	PR("TX-Failed:       ", txfailed);
++	seq_printf(file, "%38s %10s%10s%10s\n\n", "BE", "BK", "VI", "VO");
++
++	PR("MPDUs Queued:            ", queued);
++	PR("MPDUs Completed:         ", completed);
++	PR("MPDUs XRetried:          ", xretries);
++	PR("Aggregates:              ", a_aggr);
++	PR("AMPDUs Queued HW:        ", a_queued_hw);
++	PR("AMPDUs Queued SW:        ", a_queued_sw);
++	PR("AMPDUs Completed:        ", a_completed);
++	PR("AMPDUs Retried:          ", a_retries);
++	PR("AMPDUs XRetried:         ", a_xretries);
++	PR("TXERR Filtered:          ", txerr_filtered);
++	PR("FIFO Underrun:           ", fifo_underrun);
++	PR("TXOP Exceeded:           ", xtxop);
++	PR("TXTIMER Expiry:          ", timer_exp);
++	PR("DESC CFG Error:          ", desc_cfg_err);
++	PR("DATA Underrun:           ", data_underrun);
++	PR("DELIM Underrun:          ", delim_underrun);
++	PR("TX-Pkts-All:             ", tx_pkts_all);
++	PR("TX-Bytes-All:            ", tx_bytes_all);
++	PR("HW-put-tx-buf:           ", puttxbuf);
++	PR("HW-tx-start:             ", txstart);
++	PR("HW-tx-proc-desc:         ", txprocdesc);
++	PR("TX-Failed:               ", txfailed);
++	PR("HW-flush-required:       ", hw_flush_required);
++	PR("HW-flush-not-required:   ", hw_flush_not_required);
+ 
+ 	return 0;
+ }
+@@ -1334,6 +1336,8 @@ int ath9k_init_debug(struct ath_hw *ah)
+ 			    sc, &fops_debug);
+ #endif
+ 
++	debugfs_create_u32("flush_hw_q_pending", S_IRUGO | S_IWUGO,
++				sc->debug.debugfs_phy, &sc->flush_hw_q_pending);
+ 	ath9k_dfs_init_debug(sc);
+ 	ath9k_tx99_init_debug(sc);
+ 	ath9k_cmn_spectral_init_debug(&sc->spec_priv, sc->debug.debugfs_phy);
+diff --git a/drivers/net/wireless/ath/ath9k/debug.h b/drivers/net/wireless/ath/ath9k/debug.h
+index cd68c5f..a9e460a 100644
+--- a/drivers/net/wireless/ath/ath9k/debug.h
++++ b/drivers/net/wireless/ath/ath9k/debug.h
+@@ -165,6 +165,8 @@ struct ath_interrupt_stats {
+  * @txstart:  Number of times hardware was told to start tx.
+  * @txprocdesc:  Number of times tx descriptor was processed
+  * @txfailed:  Out-of-memory or other errors in xmit path.
++ * @hw_flush_required: Number of times the hardware queue needs to be flushed.
++ * @hw_flush_not_required: Number of times the hardware queue was found empty before pushing new packets to it.
+  */
+ struct ath_tx_stats {
+ 	u32 tx_pkts_all;
+@@ -189,6 +191,8 @@ struct ath_tx_stats {
+ 	u32 txstart;
+ 	u32 txprocdesc;
+ 	u32 txfailed;
++	u32 hw_flush_required;
++	u32 hw_flush_not_required;
+ };
+ 
+ /*
+diff --git a/drivers/net/wireless/ath/ath9k/main.c b/drivers/net/wireless/ath/ath9k/main.c
+index b868f02..914a0cc 100644
+--- a/drivers/net/wireless/ath/ath9k/main.c
++++ b/drivers/net/wireless/ath/ath9k/main.c
+@@ -1984,6 +1984,29 @@ static int ath9k_get_survey(struct ieee80211_hw *hw, int idx,
+ 	return 0;
+ }
+ 
++static int ath9k_get_flush_stats(struct ieee80211_hw *hw, int idx,
++		struct flush_info *survey)
++{
++	printk(KERN_ALERT "%s:%d\n", __FILE__, __LINE__);
++	struct ath_softc *sc = hw->priv;
++
++	if (IS_ENABLED(CONFIG_ATH9K_TX99))
++		return -EOPNOTSUPP;
++	survey->be_flush_req = sc->debug.stats.txstats[ATH_TXQ_AC_BE].hw_flush_required;
++	survey->be_flush_not_req = sc->debug.stats.txstats[ATH_TXQ_AC_BE].hw_flush_not_required;
++
++	survey->bk_flush_req = sc->debug.stats.txstats[ATH_TXQ_AC_BK].hw_flush_required;
++	survey->bk_flush_not_req = sc->debug.stats.txstats[ATH_TXQ_AC_BK].hw_flush_not_required;
++
++	survey->vi_flush_req = sc->debug.stats.txstats[ATH_TXQ_AC_VI].hw_flush_required;
++	survey->vi_flush_not_req = sc->debug.stats.txstats[ATH_TXQ_AC_VI].hw_flush_not_required;
++
++	survey->vo_flush_req = sc->debug.stats.txstats[ATH_TXQ_AC_VO].hw_flush_required;
++	survey->vo_flush_not_req = sc->debug.stats.txstats[ATH_TXQ_AC_VO].hw_flush_not_required;
++
++	return 0;
++}
++
+ static void ath9k_enable_dynack(struct ath_softc *sc)
+ {
+ #ifdef CONFIG_ATH9K_DYNACK
+@@ -2668,6 +2691,7 @@ struct ieee80211_ops ath9k_ops = {
+ 	.reset_tsf 	    = ath9k_reset_tsf,
+ 	.ampdu_action       = ath9k_ampdu_action,
+ 	.get_survey	    = ath9k_get_survey,
++	.get_flush_stats = ath9k_get_flush_stats,
+ 	.rfkill_poll        = ath9k_rfkill_poll_state,
+ 	.set_coverage_class = ath9k_set_coverage_class,
+ 	.flush		    = ath9k_flush,
+diff --git a/drivers/net/wireless/ath/ath9k/xmit.c b/drivers/net/wireless/ath/ath9k/xmit.c
+index e47286b..be311c1 100644
+--- a/drivers/net/wireless/ath/ath9k/xmit.c
++++ b/drivers/net/wireless/ath/ath9k/xmit.c
+@@ -2035,6 +2035,17 @@ static void ath_tx_txqaddbuf(struct ath_softc *sc, struct ath_txq *txq,
+ 	if (list_empty(head))
+ 		return;
+ 
++	if (sc->flush_hw_q_pending) {
++		if (ath9k_hw_numtxpending(ah, txq->axq_qnum)) {
++			// printk(KERN_ALERT "flush and pending!");
++			TX_STAT_INC(txq->axq_qnum, hw_flush_required);
++
++		} else {
++			// printk(KERN_ALERT "flush but nothing pending in queues!");
++			TX_STAT_INC(txq->axq_qnum, hw_flush_not_required);
++		}
++	}
++
+ 	edma = !!(ah->caps.hw_caps & ATH9K_HW_CAP_EDMA);
+ 	bf = list_first_entry(head, struct ath_buf, list);
+ 	bf_last = list_entry(head->prev, struct ath_buf, list);
+@@ -2884,6 +2895,8 @@ int ath_tx_init(struct ath_softc *sc, int nbufs)
+ 	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_EDMA)
+ 		error = ath_tx_edma_init(sc);
+ 
++	sc->flush_hw_q_pending = 0;
++
+ 	return error;
+ }
+ 
+diff --git a/include/net/cfg80211.h b/include/net/cfg80211.h
+index 9d57639..6c4519f 100644
+--- a/include/net/cfg80211.h
++++ b/include/net/cfg80211.h
+@@ -593,6 +593,29 @@ struct survey_info {
+ 	s8 noise;
+ };
+ 
++ /**
++ * struct flush_info - stats for flushing pending packets in hardware queues
++ *
++ * @be_flush_req: number of times when there was need to flush a pending packet for AC_BE
++ * @be_flush_not_req: number of times when there was no pending packet in AC_BE
++ * @bk_flush_req: number of times when there was need to flush a pending packet for AC_BK
++ * @bk_flush_not_req: number of times when there was no pending packet in AC_BK
++ * @vi_flush_req: number of times when there was need to flush a pending packet for AC_VI
++ * @vi_flush_not_req: number of times when there was no pending packet in AC_VI
++ * @vo_flush_req: number of times when there was need to flush a pending packet for AC_VO
++ * @vo_flush_not_req: number of times when there was no pending packet in AC_VO
++ */
++struct flush_info {
++	u32 be_flush_req;
++	u32 be_flush_not_req;
++	u32 bk_flush_req;
++	u32 bk_flush_not_req;
++	u32 vi_flush_req;
++	u32 vi_flush_not_req;
++	u32 vo_flush_req;
++	u32 vo_flush_not_req;
++};
++
+ #define CFG80211_MAX_WEP_KEYS	4
+ 
+ /**
+@@ -2858,6 +2881,9 @@ struct cfg80211_ops {
+ 	int	(*dump_survey)(struct wiphy *wiphy, struct net_device *netdev,
+ 			int idx, struct survey_info *info);
+ 
++	int 	(*dump_flush_stats)(struct wiphy *wiphy, struct net_device *netdev,
++			int idx, struct flush_info *info);
++
+ 	int	(*set_pmksa)(struct wiphy *wiphy, struct net_device *netdev,
+ 			     struct cfg80211_pmksa *pmksa);
+ 	int	(*del_pmksa)(struct wiphy *wiphy, struct net_device *netdev,
+diff --git a/include/net/mac80211.h b/include/net/mac80211.h
+index 920a771..a2a3364 100644
+--- a/include/net/mac80211.h
++++ b/include/net/mac80211.h
+@@ -3563,6 +3563,8 @@ struct ieee80211_ops {
+ 			    struct ieee80211_ampdu_params *params);
+ 	int (*get_survey)(struct ieee80211_hw *hw, int idx,
+ 		struct survey_info *survey);
++	int (*get_flush_stats)(struct ieee80211_hw *hw, int idx,
++			struct flush_info *survey);
+ 	void (*rfkill_poll)(struct ieee80211_hw *hw);
+ 	void (*set_coverage_class)(struct ieee80211_hw *hw, s16 coverage_class);
+ #ifdef CONFIG_NL80211_TESTMODE
+diff --git a/include/uapi/linux/nl80211.h b/include/uapi/linux/nl80211.h
+index b902f10..cc6e83e 100644
+--- a/include/uapi/linux/nl80211.h
++++ b/include/uapi/linux/nl80211.h
+@@ -1069,6 +1069,9 @@ enum nl80211_commands {
+ 	NL80211_CMD_CHANGE_NAN_CONFIG,
+ 	NL80211_CMD_NAN_MATCH,
+ 
++	NL80211_CMD_FLUSH_STATS, // Related to flushing hardware queues
++	NL80211_CMD_NEW_FLUSH_STATS,
++
+ 	/* add new commands above here */
+ 
+ 	/* used to define NL80211_CMD_MAX below */
+@@ -2297,6 +2300,8 @@ enum nl80211_attrs {
+ 
+ 	NL80211_ATTR_MAC_MASK,
+ 
++	NL80211_ATTR_FLUSH_INFO,
++
+ 	NL80211_ATTR_WIPHY_SELF_MANAGED_REG,
+ 
+ 	NL80211_ATTR_EXT_FEATURES,
+@@ -3186,6 +3191,22 @@ enum nl80211_survey_info {
+ 	NL80211_SURVEY_INFO_MAX = __NL80211_SURVEY_INFO_AFTER_LAST - 1
+ };
+ 
++enum nl80211_flush_info {
++	__NL80211_FLUSH_INFO_INVALID,
++	NL80211_FLUSH_REQ_BE,
++	NL80211_FLUSH_NOT_REQ_BE,
++	NL80211_FLUSH_REQ_BK,
++	NL80211_FLUSH_NOT_REQ_BK,
++	NL80211_FLUSH_REQ_VI,
++	NL80211_FLUSH_NOT_REQ_VI,
++	NL80211_FLUSH_REQ_VO,
++	NL80211_FLUSH_NOT_REQ_VO,
++
++	/* keep last */
++	__NL80211_FLUSH_INFO_AFTER_LAST,
++	NL80211_FLUSH_INFO_MAX = __NL80211_FLUSH_INFO_AFTER_LAST - 1
++};
++
+ /* keep old names for compatibility */
+ #define NL80211_SURVEY_INFO_CHANNEL_TIME		NL80211_SURVEY_INFO_TIME
+ #define NL80211_SURVEY_INFO_CHANNEL_TIME_BUSY		NL80211_SURVEY_INFO_TIME_BUSY
+diff --git a/net/mac80211/cfg.c b/net/mac80211/cfg.c
+index d7801f6..869d7dc 100644
+--- a/net/mac80211/cfg.c
++++ b/net/mac80211/cfg.c
+@@ -668,6 +668,14 @@ static int ieee80211_dump_survey(struct wiphy *wiphy, struct net_device *dev,
+ 	return drv_get_survey(local, idx, survey);
+ }
+ 
++static int ieee80211_dump_flush_stats(struct wiphy *wiphy, struct net_device *dev,
++		 int idx, struct flush_info *survey)
++{
++	struct ieee80211_local *local = wdev_priv(dev->ieee80211_ptr);
++
++	return drv_get_flush_stats(local, idx, survey);
++}
++
+ static int ieee80211_get_station(struct wiphy *wiphy, struct net_device *dev,
+ 				 const u8 *mac, struct station_info *sinfo)
+ {
+@@ -3632,6 +3640,7 @@ const struct cfg80211_ops mac80211_config_ops = {
+ 	.get_station = ieee80211_get_station,
+ 	.dump_station = ieee80211_dump_station,
+ 	.dump_survey = ieee80211_dump_survey,
++	.dump_flush_stats = ieee80211_dump_flush_stats,
+ #ifdef CONFIG_MAC80211_MESH
+ 	.add_mpath = ieee80211_add_mpath,
+ 	.del_mpath = ieee80211_del_mpath,
+diff --git a/net/mac80211/driver-ops.h b/net/mac80211/driver-ops.h
+index 49c8a9c..9d470cf 100644
+--- a/net/mac80211/driver-ops.h
++++ b/net/mac80211/driver-ops.h
+@@ -608,6 +608,15 @@ static inline int drv_get_survey(struct ieee80211_local *local, int idx,
+ 	return ret;
+ }
+ 
++static inline int drv_get_flush_stats(struct ieee80211_local *local, int idx,
++		struct flush_info *survey)
++{
++	int ret = -EOPNOTSUPP;
++	if (local->ops->get_flush_stats)
++		ret = local->ops->get_flush_stats(&local->hw, idx, survey);
++	return ret;
++}
++
+ static inline void drv_rfkill_poll(struct ieee80211_local *local)
+ {
+ 	might_sleep();
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+index 5b75468..f645329 100644
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -7707,6 +7707,91 @@ static int nl80211_dump_survey(struct sk_buff *skb, struct netlink_callback *cb)
+ 	return res;
+ }
+ 
++static int nl80211_send_flush_stats(struct sk_buff *msg, u32 portid, u32 seq,
++		int flags, struct net_device *dev,
++		struct flush_info *survey)
++{
++	void *hdr;
++	struct nlattr *infoattr;
++
++	hdr = nl80211hdr_put(msg, portid, seq, flags,
++			NL80211_CMD_NEW_FLUSH_STATS);
++	if (!hdr)
++		return -ENOMEM;
++
++	if (nla_put_u32(msg, NL80211_ATTR_IFINDEX, dev->ifindex))
++		goto nla_put_failure;
++
++	infoattr = nla_nest_start(msg, NL80211_ATTR_FLUSH_INFO);
++	if (!infoattr)
++		goto nla_put_failure;
++
++	if (nla_put_u32(msg, NL80211_FLUSH_REQ_BE, survey->be_flush_req))
++		goto nla_put_failure;
++	if (nla_put_u32(msg, NL80211_FLUSH_NOT_REQ_BE, survey->be_flush_not_req))
++		goto nla_put_failure;
++	if (nla_put_u32(msg, NL80211_FLUSH_REQ_BK, survey->bk_flush_req))
++		goto nla_put_failure;
++	if (nla_put_u32(msg, NL80211_FLUSH_NOT_REQ_BK, survey->bk_flush_not_req))
++		goto nla_put_failure;
++	if (nla_put_u32(msg, NL80211_FLUSH_REQ_VI, survey->vi_flush_req))
++		goto nla_put_failure;
++	if (nla_put_u32(msg, NL80211_FLUSH_NOT_REQ_VI, survey->vi_flush_not_req))
++		goto nla_put_failure;
++	if (nla_put_u32(msg, NL80211_FLUSH_REQ_VO, survey->vo_flush_req))
++		goto nla_put_failure;
++	if (nla_put_u32(msg, NL80211_FLUSH_NOT_REQ_VO, survey->vo_flush_not_req))
++		goto nla_put_failure;
++
++	nla_nest_end(msg, infoattr);
++
++	genlmsg_end(msg, hdr);
++	return 0;
++
++ nla_put_failure:
++	genlmsg_cancel(msg, hdr);
++	return -EMSGSIZE;
++
++}
++
++static int nl80211_dump_flush_stats(struct sk_buff *skb,
++		struct netlink_callback *cb)
++{
++	struct flush_info survey;
++	struct cfg80211_registered_device *rdev;
++	struct wireless_dev *wdev;
++	int survey_idx = cb->args[2];
++	int res;
++
++	// printk(KERN_ALERT "%s:%d\n", __FILE__, __LINE__);
++	res = nl80211_prepare_wdev_dump(skb, cb, &rdev, &wdev);
++	if (res)
++		return res;
++
++
++	if (!rdev->ops->dump_flush_stats) {
++		res = -EOPNOTSUPP;
++		printk(KERN_ALERT "Operation not supported: %s:%d\n", __FILE__, __LINE__);
++		goto out_err;
++	}
++
++	res = rdev_dump_flush_stats(rdev, wdev->netdev, survey_idx, &survey);
++
++	if (nl80211_send_flush_stats(skb,
++			NETLINK_CB(cb->skb).portid,
++			cb->nlh->nlmsg_seq, NLM_F_MULTI,
++			wdev->netdev, &survey)) {
++		goto out;
++	}
++ out:
++	cb->args[2] = survey_idx; // <- needed ????
++    res = skb->len;
++ out_err:
++	rtnl_unlock();
++	printk(KERN_ALERT "returning %s:%d", __FILE__, __LINE__);
++	return 0;
++}
++
+ static bool nl80211_valid_wpa_versions(u32 wpa_versions)
+ {
+ 	return !(wpa_versions & ~(NL80211_WPA_VERSION_1 |
+@@ -12043,6 +12128,11 @@ static const struct genl_ops nl80211_ops[] = {
+ 				  NL80211_FLAG_NEED_RTNL,
+ 	},
+ 	{
++		.cmd = NL80211_CMD_FLUSH_STATS,
++		.policy = nl80211_policy,
++		.dumpit = nl80211_dump_flush_stats
++	},
++	{
+ 		.cmd = NL80211_CMD_GET_REG,
+ 		.doit = nl80211_get_reg_do,
+ 		.dumpit = nl80211_get_reg_dump,
+diff --git a/net/wireless/rdev-ops.h b/net/wireless/rdev-ops.h
+index 11cf83c..7ce4c7d 100644
+--- a/net/wireless/rdev-ops.h
++++ b/net/wireless/rdev-ops.h
+@@ -621,6 +621,15 @@ static inline int rdev_dump_survey(struct cfg80211_registered_device *rdev,
+ 	return ret;
+ }
+ 
++static inline int rdev_dump_flush_stats(struct cfg80211_registered_device *rdev,
++		   struct net_device *netdev, int idx,
++		   struct flush_info *info)
++{
++	int ret;
++	ret = rdev->ops->dump_flush_stats(&rdev->wiphy, netdev, idx, info);
++	return ret;
++}
++
+ static inline int rdev_set_pmksa(struct cfg80211_registered_device *rdev,
+ 				 struct net_device *netdev,
+ 				 struct cfg80211_pmksa *pmksa)
+-- 
+2.7.4
+
